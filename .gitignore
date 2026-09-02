@@ -216,3 +216,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Dataset - downloaded automatically
+data/images/
+data/labels/
+data/construction-ppe.zip
+
+# YOLO training outputs
+runs/
+
+# Temporary files
+temp_video.mp4
