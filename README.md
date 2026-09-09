@@ -127,6 +127,24 @@ EPP Detector does **not claim ownership of the SH17 dataset**.
 
 The trained model in this repository was produced using SH17 data. Users intending to redistribute, sublicense or commercially deploy the model should independently review the dataset license and obtain additional permission from the dataset rights holders when necessary.
 
+> [!IMPORTANT]
+> The model in this repository was trained using the SH17 Dataset for PPE Detection,
+> licensed under CC BY-NC-SA 4.0.
+> Commercial use is not permitted under the dataset's standard license.
+> See `DATASET_LICENSE.md` for details.
+
+## 📜 App Code License
+
+EPP Detector is source-available for personal, educational, research,
+and other non-commercial purposes.
+
+**Commercial use requires a separate license from the author.**
+
+See [LICENSE](LICENSE) for details.
+
+The trained model and SH17 dataset are subject to additional licensing
+terms described in [DATASET_LICENSE.md](DATASET_LICENSE.md).
+
 ## ⚠️ Disclaimer
 
 EPP Detector is an **AI-assisted safety monitoring tool**.
