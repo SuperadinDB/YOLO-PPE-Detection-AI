@@ -28,6 +28,7 @@ pip-delete-this-directory.txt
 # ------------------------------------------
 
 .venv/
+.venv-cpu/
 venv/
 env/
 ENV/
@@ -44,6 +45,9 @@ venv.bak/
 
 build/
 dist/
+build-cpu/
+dist-cpu/
+dist-windows/
 
 # IMPORTANT:
 # epp_detector.spec is intentionally NOT ignored.

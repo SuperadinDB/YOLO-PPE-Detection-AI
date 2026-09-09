@@ -1,19 +1,18 @@
 from datetime import datetime
 from hashlib import sha1
-from io import BytesIO
 from pathlib import Path
 from queue import Empty, Queue
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import html
 import time
-
-import openpyxl
 
 import av
 import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
+import torch
 from PIL import Image
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
@@ -24,7 +23,7 @@ from src.risk import (
     SceneEventMonitor,
     analyze_scene,
 )
-from ui.theme import apply_theme, particles
+from ui.theme import THEMES, apply_theme, particles
 
 from threading import Lock, Thread
 import uuid
@@ -52,8 +51,71 @@ st.set_page_config(
     layout="centered",
 )
 
-apply_theme()
-particles()
+# ============================================================
+# APPEARANCE / LANGUAGE
+# ============================================================
+
+THEME_OPTIONS = {
+    "⚛️ Quantum": "Quantum Violet",
+    "🧠 Neural": "Neural Blue",
+    "💻 Matrix": "Matrix Emerald",
+}
+
+if "theme_selector" not in st.session_state:
+    st.session_state.theme_selector = "🧠 Neural"
+
+if "language_selector" not in st.session_state:
+    st.session_state.language_selector = "ES"
+
+if "gpu_acceleration" not in st.session_state:
+    st.session_state.gpu_acceleration = False
+
+cuda_available = torch.cuda.is_available()
+
+if not cuda_available:
+    st.session_state.gpu_acceleration = False
+
+# Compact controls below Streamlit's top toolbar.
+# The first visual row can overlap Streamlit's app controls, so we add
+# a small vertical offset while keeping both selectors at the upper-right.
+st.markdown(
+    '<div style="height: 32px;"></div>',
+    unsafe_allow_html=True,
+)
+
+top_spacer, theme_col, lang_col = st.columns(
+    [6.6, 2.4, 1.0],
+    vertical_alignment="center",
+    gap="small",
+)
+
+with theme_col:
+    theme_label = st.selectbox(
+        "Theme",
+        list(THEME_OPTIONS.keys()),
+        key="theme_selector",
+        label_visibility="collapsed",
+    )
+
+with lang_col:
+    language_label = st.selectbox(
+        "Language",
+        ["EN", "ES"],
+        key="language_selector",
+        label_visibility="collapsed",
+    )
+
+theme_name = THEME_OPTIONS[theme_label]
+language = "en" if language_label == "EN" else "es"
+
+apply_theme(theme_name)
+particles(theme_name)
+
+device_mode = (
+    "gpu"
+    if cuda_available and st.session_state.gpu_acceleration
+    else "cpu"
+)
 
 
 # ============================================================
@@ -61,21 +123,22 @@ particles()
 # ============================================================
 
 @st.cache_resource
-def load_detector():
+def load_detector(selected_device):
     return PPEDetector(
         model_path=MODEL_PATH,
         confidence=0.25,
+        device_mode=selected_device,
     )
 
 
-detector = load_detector()
+detector = load_detector(device_mode)
 detector.confidence = 0.25
 
 camera_inference_lock = Lock()
 
+
 @st.cache_resource
 def get_background_jobs():
-
     return {
         "lock": Lock(),
         "jobs": {},
@@ -83,39 +146,6 @@ def get_background_jobs():
 
 
 background_jobs = get_background_jobs()
-
-# ============================================================
-# LANGUAGE
-# ============================================================
-
-lang_col1, lang_col2 = st.columns([8.5, 1])
-
-with lang_col2:
-    icon_col, select_col = st.columns(
-        [0.25, 0.75],
-        vertical_alignment="center",
-        gap="small",
-    )
-
-    with icon_col:
-        st.markdown(
-            '<div class="language-icon">🌐</div>',
-            unsafe_allow_html=True,
-        )
-
-    with select_col:
-        language_label = st.selectbox(
-            "Language",
-            ["EN", "ES"],
-            index=0,
-            label_visibility="collapsed",
-        )
-
-language = (
-    "en"
-    if language_label == "EN"
-    else "es"
-)
 
 
 # ============================================================
@@ -164,7 +194,7 @@ TEXT = {
         "export_help": (
             "Download the session event log in CSV format "
             "for further analysis, documentation, and follow-up."
-                ),
+        ),
         "download_csv": "Download CSV",
         "pause": "⏸ Pause",
         "resume": "▶ Resume",
@@ -239,6 +269,56 @@ TEXT = {
 }
 
 t = TEXT[language]
+
+DEVICE_TEXT = {
+    "en": {
+        "title": "Neural processing",
+        "help": (
+            "Choose how AI inference is rendered. CPU maximizes compatibility; "
+            "GPU acceleration uses a CUDA-compatible NVIDIA graphics processor when available."
+        ),
+        "toggle": "Use GPU acceleration",
+        "unavailable": (
+            "No valid graphics processor was detected for neural processing. "
+            "Rendering will be performed in CPU compatibility mode."
+        ),
+    },
+    "es": {
+        "title": "Procesamiento neural",
+        "help": (
+            "Selecciona cómo se realizará la inferencia de IA. CPU ofrece máxima compatibilidad; "
+            "la aceleración GPU utiliza un procesador gráfico NVIDIA compatible con CUDA cuando está disponible."
+        ),
+        "toggle": "Usar aceleración GPU",
+        "unavailable": (
+            "No se ha detectado un procesador gráfico válido para el procesamiento neural. "
+            "Se llevará a cabo el renderizado en modo compatibilidad para CPU."
+        ),
+    },
+}
+
+
+def render_neural_processing():
+    dt = DEVICE_TEXT[language]
+
+    st.markdown(
+        (
+            '<div class="neural-panel">'
+            f'<div class="neural-title">{dt["title"]}</div>'
+            f'<div class="neural-text">{dt["help"]}</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+    st.toggle(
+        dt["toggle"],
+        key="gpu_acceleration",
+        disabled=not cuda_available,
+    )
+
+    if not cuda_available:
+        st.warning(dt["unavailable"])
 
 
 SECTION_INFO = {
@@ -469,145 +549,6 @@ def event_rows_for_export(
     )
 
 
-def build_excel_bytes(
-    monitor,
-):
-    from openpyxl import Workbook
-    from openpyxl.drawing.image import Image as XLImage
-
-    rows = monitor.export_rows()
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Review Events"
-
-    if language == "es":
-        headers = [
-            "Snapshot",
-            "Evento",
-            "Individuo",
-            "EPP",
-            "Inicio (s)",
-            "Fin (s)",
-            "Duración (s)",
-            "Personas promedio",
-            "Confirmación promedio (%)",
-            "Confirmación mínima (%)",
-            "Estado",
-        ]
-    else:
-        headers = [
-            "Snapshot",
-            "Event",
-            "Individual",
-            "PPE",
-            "Start (s)",
-            "End (s)",
-            "Duration (s)",
-            "Average persons",
-            "Average confirmation (%)",
-            "Minimum confirmation (%)",
-            "Status",
-        ]
-
-    ws.append(
-        headers
-    )
-
-    for index, row in enumerate(
-        rows,
-        start=2,
-    ):
-        ppe_name = (
-            DISPLAY_NAMES[language]
-            .get(
-                row["ppe"],
-                row["ppe"],
-            )
-        )
-
-        status = row["status"]
-
-        if language == "es":
-            status = (
-                "ABIERTO"
-                if status == "OPEN"
-                else "CERRADO"
-            )
-
-        ws.append(
-            [
-                "",
-                row["event_id"],
-                row["person_index"],
-                ppe_name,
-                row["start_s"],
-                row["end_s"],
-                row["duration_s"],
-                row["avg_persons"],
-                row["avg_confirmed_pct"],
-                row["min_confirmed_pct"],
-                status,
-            ]
-        )
-
-        snapshot = row[
-            "snapshot"
-        ]
-
-        if snapshot is not None:
-            rgb = cv2.cvtColor(
-                snapshot,
-                cv2.COLOR_BGR2RGB,
-            )
-
-            image_buffer = BytesIO()
-
-            Image.fromarray(
-                rgb
-            ).save(
-                image_buffer,
-                format="JPEG",
-                quality=78,
-            )
-
-            image_buffer.seek(0)
-
-            xl_image = XLImage(
-                image_buffer
-            )
-
-            xl_image.width = 72
-            xl_image.height = 72
-
-            ws.add_image(
-                xl_image,
-                f"A{index}",
-            )
-
-            ws.row_dimensions[
-                index
-            ].height = 58
-
-    ws.column_dimensions["A"].width = 13
-    ws.column_dimensions["B"].width = 10
-    ws.column_dimensions["C"].width = 12
-    ws.column_dimensions["D"].width = 24
-    ws.column_dimensions["E"].width = 13
-    ws.column_dimensions["F"].width = 13
-    ws.column_dimensions["G"].width = 14
-    ws.column_dimensions["H"].width = 20
-    ws.column_dimensions["I"].width = 25
-    ws.column_dimensions["J"].width = 24
-    ws.column_dimensions["K"].width = 14
-
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-
-    return output.getvalue()
-
-
 def render_events(
     monitor,
     key_prefix,
@@ -752,37 +693,23 @@ def render_events(
         .encode("utf-8-sig")
     )
 
-    col1, col2 = st.columns(2)
+    st.download_button(
+        t["download_csv"],
+        data=csv_bytes,
+        file_name=(
+            f"hse_review_events_{timestamp}.csv"
+        ),
+        mime="text/csv",
+        use_container_width=True,
+        key=f"{key_prefix}_csv",
+    )
 
-    with col1:
-        st.download_button(
-            t["download_csv"],
-            data=csv_bytes,
-            file_name=(
-                f"hse_review_events_{timestamp}.csv"
-            ),
-            mime="text/csv",
-            use_container_width=True,
-            key=f"{key_prefix}_csv",
-        )
-
-    with col2:
-        try:
-            xlsx_bytes = (
-                build_excel_bytes(
-                    monitor
-                )
-            )
-
-        except ImportError:
-            # Excel export is optional. CSV remains available without
-            # exposing dependency warnings to the end user.
-            pass
 
 def process_video_background(
     job_id,
     video_path,
     selected_ppe,
+    device_mode,
 ):
 
     # Modelo independiente para evitar conflictos
@@ -790,6 +717,7 @@ def process_video_background(
     worker_detector = PPEDetector(
         model_path=MODEL_PATH,
         confidence=0.25,
+        device_mode=device_mode,
     )
 
     monitor = SceneEventMonitor()
@@ -802,7 +730,11 @@ def process_video_background(
         cv2.CAP_PROP_FPS
     )
 
-    TARGET_FPS = 10.0
+    TARGET_FPS = (
+        10.0
+        if worker_detector.use_cuda
+        else 5.0
+    )
 
     frame_step = max(
         1,
@@ -915,6 +847,7 @@ def process_video_background(
             Path(video_path).unlink(missing_ok=True)
         except Exception:
             pass
+
 
 def footer():
     st.markdown(
@@ -1112,6 +1045,8 @@ if source == "Image":
         ],
     )
 
+    render_neural_processing()
+
     if uploaded_file:
         image = (
             Image.open(
@@ -1193,65 +1128,35 @@ elif source == "Video":
     uploaded_file = None
 
     if not use_sample:
-
         uploaded_file = st.file_uploader(
             t["upload_video"],
-            type=[
-                "mp4",
-                "avi",
-                "mov",
-                "mkv",
-            ],
+            type=["mp4", "avi", "mov", "mkv"],
         )
+
+    render_neural_processing()
 
     video_bytes = None
 
     if use_sample:
-
         if SAMPLE_VIDEO.exists():
-
             video_bytes = SAMPLE_VIDEO.read_bytes()
-
         else:
-
-            st.error(
-                "Sample video not found."
-                if language == "en"
-                else "No se encontró el video de muestra."
-            )
+            st.error(t["sample_video_missing"])
 
     elif uploaded_file:
-
         video_bytes = uploaded_file.getvalue()
 
     if video_bytes:
         file_bytes = video_bytes
+        video_hash = sha1(file_bytes).hexdigest()
 
-        video_hash = sha1(
-            file_bytes
-        ).hexdigest()
+        if st.session_state.get("video_hash") != video_hash:
+            temp_path = PROJECT_ROOT / "temp_video.mp4"
 
-        if (
-            st.session_state.get(
-                "video_hash"
-            ) != video_hash
-        ):
-            temp_path = (
-                PROJECT_ROOT
-                / "temp_video.mp4"
-            )
+            with open(temp_path, "wb") as f:
+                f.write(file_bytes)
 
-            with open(
-                temp_path,
-                "wb",
-            ) as f:
-                f.write(
-                    file_bytes
-                )
-
-            old_cap = st.session_state.get(
-                "video_cap"
-            )
+            old_cap = st.session_state.get("video_cap")
 
             if old_cap is not None:
                 try:
@@ -1259,38 +1164,21 @@ elif source == "Video":
                 except Exception:
                     pass
 
-            st.session_state.video_hash = (
-                video_hash
-            )
-
-            st.session_state.video_cap = (
-                cv2.VideoCapture(
-                    str(temp_path)
-                )
-            )
-
-            st.session_state.video_monitor = (
-                SceneEventMonitor()
-            )
-
+            st.session_state.video_hash = video_hash
+            st.session_state.video_cap = cv2.VideoCapture(str(temp_path))
+            st.session_state.video_monitor = SceneEventMonitor()
             st.session_state.video_finished = False
             st.session_state.video_paused = False
             st.session_state.video_last_frame = None
-            st.session_state.video_last_scene = (
-                analyze_scene(
-                    {},
-                    selected_ppe,
-                )
+            st.session_state.video_last_scene = analyze_scene(
+                {},
+                selected_ppe,
             )
 
-        monitor = (
-            st.session_state.video_monitor
-        )
+        monitor = st.session_state.video_monitor
 
         def restart_video():
-            cap = st.session_state.get(
-                "video_cap"
-            )
+            cap = st.session_state.get("video_cap")
 
             if cap is not None:
                 try:
@@ -1298,32 +1186,18 @@ elif source == "Video":
                 except Exception:
                     pass
 
-            temp_path = (
-                PROJECT_ROOT
-                / "temp_video.mp4"
-            )
-
-            st.session_state.video_cap = (
-                cv2.VideoCapture(
-                    str(temp_path)
-                )
-            )
-
+            temp_path = PROJECT_ROOT / "temp_video.mp4"
+            st.session_state.video_cap = cv2.VideoCapture(str(temp_path))
             monitor.reset()
-
             st.session_state.video_finished = False
             st.session_state.video_paused = False
             st.session_state.video_last_frame = None
-            st.session_state.video_last_scene = (
-                analyze_scene(
-                    {},
-                    selected_ppe,
-                )
+            st.session_state.video_last_scene = analyze_scene(
+                {},
+                selected_ppe,
             )
 
-        controls1, controls2 = (
-            st.columns(2)
-        )
+        controls1, controls2 = st.columns(2)
 
         with controls1:
             pause_label = (
@@ -1354,176 +1228,182 @@ elif source == "Video":
         monitor_placeholder = st.empty()
         events_placeholder = st.empty()
 
-        cap = (
-            st.session_state.video_cap
-        )
+        cap = st.session_state.video_cap
+        source_fps = cap.get(cv2.CAP_PROP_FPS)
 
-        source_fps = cap.get(
-            cv2.CAP_PROP_FPS
-        )
-
-        if (
-            not source_fps
-            or source_fps <= 0
-        ):
+        if not source_fps or source_fps <= 0:
             source_fps = 30.0
 
-        frame_duration = (
-            1.0 / source_fps
+        frame_duration = 1.0 / source_fps
+
+        target_inference_fps = (
+            source_fps
+            if detector.use_cuda
+            else 10.0
         )
 
+        last_result = None
+        last_detections = {}
+        last_inference_time = 0.0
+        inference_executor = ThreadPoolExecutor(max_workers=1)
+        inference_future = None
+        last_inference_submit = 0.0
         last_ui_update = 0.0
 
-        while (
-            cap.isOpened()
-            and
-            not st.session_state.video_paused
-            and
-            not st.session_state.video_finished
-        ):
-            loop_start = (
-                time.perf_counter()
-            )
+        def run_cpu_inference(img):
+            start = time.perf_counter()
+            result = detector.predict(img)
+            detections = detector.get_detections(result)
+            elapsed = time.perf_counter() - start
+            return result, detections, elapsed
 
-            ret, frame = cap.read()
+        try:
+            while (
+                cap.isOpened()
+                and not st.session_state.video_paused
+                and not st.session_state.video_finished
+            ):
+                loop_start = time.perf_counter()
+                ret, frame = cap.read()
 
-            if not ret:
-                st.session_state.video_finished = True
-
-                final_time = (
-                    cap.get(
-                        cv2.CAP_PROP_POS_MSEC
+                if not ret:
+                    st.session_state.video_finished = True
+                    final_time = (
+                        cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
                     )
-                    / 1000.0
+                    monitor.finalize(final_time)
+                    break
+
+                timestamp_seconds = (
+                    cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
                 )
 
-                monitor.finalize(
-                    final_time
-                )
-
-                break
-
-            timestamp_seconds = (
-                cap.get(
-                    cv2.CAP_PROP_POS_MSEC
-                )
-                / 1000.0
-            )
-
-            inference_start = (
-                time.perf_counter()
-            )
-
-            # NO TRACKING
-            result = detector.predict(
-                frame
-            )
-
-            inference_time = (
-                time.perf_counter()
-                - inference_start
-            )
-
-            detections = (
-                detector.get_detections(
-                    result
-                )
-            )
-
-            monitor_data = monitor.update(
-                detections,
-                selected_ppe,
-                timestamp_seconds,
-                frame=frame,
-            )
-
-            scene = monitor_data[
-                "scene"
-            ]
-
-            st.session_state.video_last_scene = (
-                scene
-            )
-
-            annotated = detector.draw(
-                frame,
-                result,
-                display_names=DISPLAY_NAMES[
-                    language
-                ],
-            )
-
-            frame_rgb = cv2.cvtColor(
-                annotated,
-                cv2.COLOR_BGR2RGB,
-            )
-
-            st.session_state.video_last_frame = (
-                frame_rgb
-            )
-
-            frame_placeholder.image(
-                frame_rgb,
-                channels="RGB",
-                use_container_width=True,
-            )
-
-            elapsed = (
-                time.perf_counter()
-                - loop_start
-            )
-
-            processing_fps = (
-                1.0 / elapsed
-                if elapsed > 0
-                else 0.0
-            )
-
-            stats_placeholder.caption(
-                f"Source: {source_fps:.1f} FPS · "
-                f"Processing: {processing_fps:.1f} FPS · "
-                f"Inference: {inference_time * 1000:.1f} ms"
-            )
-
-            # Dashboard/events only 2x/sec. They do not block every frame.
-            if (
-                timestamp_seconds
-                - last_ui_update
-            ) >= 0.5:
-                with monitor_placeholder.container():
-                    render_monitor(
-                        scene
+                # GPU: inferencia normal en cada frame.
+                if detector.use_cuda:
+                    inference_start = time.perf_counter()
+                    result = detector.predict(frame)
+                    inference_time = (
+                        time.perf_counter() - inference_start
                     )
+                    detections = detector.get_detections(result)
+                    last_result = result
+                    last_detections = detections
+                    last_inference_time = inference_time
 
-                with events_placeholder.container():
-                    render_events(
-                        monitor,
-                        key_prefix="video_live",
-                        allow_export=False,
+                # CPU: inferencia asíncrona. El video no espera a YOLO.
+                else:
+                    if (
+                        inference_future is not None
+                        and inference_future.done()
+                    ):
+                        try:
+                            (
+                                last_result,
+                                last_detections,
+                                last_inference_time,
+                            ) = inference_future.result()
+                        except Exception as exc:
+                            st.error(f"Inference error: {exc}")
+                        finally:
+                            inference_future = None
+
+                    inference_interval = 1.0 / target_inference_fps
+                    now = time.perf_counter()
+
+                    if (
+                        inference_future is None
+                        and (
+                            now - last_inference_submit
+                        ) >= inference_interval
+                    ):
+                        inference_future = inference_executor.submit(
+                            run_cpu_inference,
+                            frame.copy(),
+                        )
+                        last_inference_submit = now
+
+                    result = last_result
+                    detections = last_detections
+                    inference_time = last_inference_time
+
+                monitor_data = monitor.update(
+                    detections,
+                    selected_ppe,
+                    timestamp_seconds,
+                    frame=frame,
+                )
+
+                scene = monitor_data["scene"]
+                st.session_state.video_last_scene = scene
+
+                if result is not None:
+                    annotated = detector.draw(
+                        frame,
+                        result,
+                        display_names=DISPLAY_NAMES[language],
                     )
+                else:
+                    annotated = frame.copy()
 
-                last_ui_update = (
-                    timestamp_seconds
+                frame_rgb = cv2.cvtColor(
+                    annotated,
+                    cv2.COLOR_BGR2RGB,
                 )
 
-            remaining = (
-                frame_duration
-                - (
-                    time.perf_counter()
-                    - loop_start
+                st.session_state.video_last_frame = frame_rgb
+
+                frame_placeholder.image(
+                    frame_rgb,
+                    channels="RGB",
+                    use_container_width=True,
                 )
+
+                inference_fps = (
+                    1.0 / inference_time
+                    if inference_time > 0
+                    else 0.0
+                )
+
+                stats_placeholder.caption(
+                    f"Source: {source_fps:.1f} FPS · "
+                    f"Inference capacity: {inference_fps:.1f} FPS · "
+                    f"Latency: {inference_time * 1000:.1f} ms · "
+                    f"Target: {target_inference_fps:.0f} FPS · "
+                    f"Device: {detector.device_name}"
+                )
+
+                if (
+                    timestamp_seconds - last_ui_update
+                ) >= 0.5:
+                    with monitor_placeholder.container():
+                        render_monitor(scene)
+
+                    with events_placeholder.container():
+                        render_events(
+                            monitor,
+                            key_prefix="video_live",
+                            allow_export=False,
+                        )
+
+                    last_ui_update = timestamp_seconds
+
+                remaining = (
+                    frame_duration
+                    - (time.perf_counter() - loop_start)
+                )
+
+                if remaining > 0:
+                    time.sleep(remaining)
+
+        finally:
+            inference_executor.shutdown(
+                wait=False,
+                cancel_futures=True,
             )
-
-            if remaining > 0:
-                time.sleep(
-                    remaining
-                )
 
         if (
-            st.session_state.video_last_frame
-            is not None
-            and
-            st.session_state.video_paused
+            st.session_state.video_last_frame is not None
+            and st.session_state.video_paused
         ):
             frame_placeholder.image(
                 st.session_state.video_last_frame,
@@ -1532,9 +1412,7 @@ elif source == "Video":
             )
 
         if st.session_state.video_finished:
-            st.success(
-                t["finished"]
-            )
+            st.success(t["finished"])
 
         render_monitor(
             st.session_state.video_last_scene
@@ -1552,6 +1430,8 @@ elif source == "Video":
 # ============================================================
 
 elif source == "Webcam":
+
+    render_neural_processing()
 
     if "camera_monitor" not in st.session_state:
         st.session_state.camera_monitor = (
@@ -1588,7 +1468,6 @@ elif source == "Webcam":
         selected_ppe.copy()
     )
 
-
     def video_frame_callback(
         frame: av.VideoFrame,
     ) -> av.VideoFrame:
@@ -1615,7 +1494,6 @@ elif source == "Webcam":
                 format="bgr24",
             )
 
-
         try:
 
             # ------------------------------------------------
@@ -1625,7 +1503,6 @@ elif source == "Webcam":
             result = detector.predict(
                 img
             )
-
 
             # ------------------------------------------------
             # DETECTIONS
@@ -1637,7 +1514,6 @@ elif source == "Webcam":
                 )
             )
 
-
             # ------------------------------------------------
             # TIMESTAMP
             # ------------------------------------------------
@@ -1646,7 +1522,6 @@ elif source == "Webcam":
                 time.monotonic()
                 - camera_started_at
             )
-
 
             # ------------------------------------------------
             # EVENT MONITOR
@@ -1658,7 +1533,6 @@ elif source == "Webcam":
                 timestamp_seconds,
                 frame=img,
             )
-
 
             # ------------------------------------------------
             # DASHBOARD QUEUE
@@ -1676,30 +1550,32 @@ elif source == "Webcam":
             except Exception:
                 pass
 
-
             # ------------------------------------------------
             # DRAW DETECTIONS
             # ------------------------------------------------
 
-            annotated = detector.draw(
-                img,
-                result,
-                display_names=DISPLAY_NAMES[
-                    language
-                ],
-            )
+            if result is not None:
 
+                annotated = detector.draw(
+                    img,
+                    result,
+                    display_names=DISPLAY_NAMES[
+                        language
+                    ],
+                )
+
+            else:
+
+                annotated = img.copy()
 
             return av.VideoFrame.from_ndarray(
                 annotated,
                 format="bgr24",
             )
 
-
         finally:
 
             camera_inference_lock.release()
-
 
     # ========================================================
     # WEBRTC
@@ -1720,11 +1596,9 @@ elif source == "Webcam":
         async_processing=True,
     )
 
-
     camera_playing = bool(
         webrtc_ctx.state.playing
     )
-
 
     # ========================================================
     # LAST DASHBOARD STATE
@@ -1747,7 +1621,6 @@ elif source == "Webcam":
         except Empty:
             pass
 
-
     # ========================================================
     # DASHBOARD REFRESH
     # ========================================================
@@ -1757,7 +1630,6 @@ elif source == "Webcam":
         if camera_playing
         else None
     )
-
 
     @st.fragment(
         run_every=camera_run_every
@@ -1779,7 +1651,6 @@ elif source == "Webcam":
         except Empty:
             pass
 
-
         scene = st.session_state.get(
             "camera_last_scene",
 
@@ -1789,11 +1660,9 @@ elif source == "Webcam":
             ),
         )
 
-
         render_monitor(
             scene
         )
-
 
         render_events(
             monitor,
@@ -1804,7 +1673,6 @@ elif source == "Webcam":
                 not camera_playing
             ),
         )
-
 
         # ----------------------------------------------------
         # RESET SESSION
@@ -1835,7 +1703,6 @@ elif source == "Webcam":
 
                 st.rerun()
 
-
     camera_monitor_fragment()
 
 # ============================================================
@@ -1854,6 +1721,8 @@ elif source == "Background":
         ],
         key="background_video",
     )
+
+    render_neural_processing()
 
     if uploaded_file:
 
@@ -1901,6 +1770,7 @@ elif source == "Background":
                     job_id,
                     temp_path,
                     selected_ppe.copy(),
+                    device_mode,
                 ),
                 daemon=True,
             )

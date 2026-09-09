@@ -1,4 +1,7 @@
+import os
+
 import cv2
+import torch
 
 from ultralytics import YOLO
 from ultralytics.utils.plotting import colors
@@ -6,16 +9,75 @@ from ultralytics.utils.plotting import colors
 
 class PPEDetector:
 
-    def __init__(self, model_path, confidence=0.25):
+    def __init__(
+        self,
+        model_path,
+        confidence=0.25,
+        device_mode="auto",
+    ):
         self.model = YOLO(model_path)
         self.confidence = confidence
 
+        self.cuda_available = torch.cuda.is_available()
+
+        if device_mode not in {"auto", "cpu", "gpu"}:
+            raise ValueError(
+                "device_mode must be 'auto', 'cpu', or 'gpu'"
+            )
+
+        if device_mode == "gpu" and not self.cuda_available:
+            raise RuntimeError(
+                "GPU mode requested, but no CUDA-compatible GPU is available."
+            )
+
+        self.use_cuda = (
+            self.cuda_available
+            if device_mode == "auto"
+            else device_mode == "gpu"
+        )
+
+        self.device_mode = (
+            "gpu" if self.use_cuda else "cpu"
+        )
+
+        self.device = (
+            0 if self.use_cuda else "cpu"
+        )
+
+        self.device_name = (
+            torch.cuda.get_device_name(0)
+            if self.use_cuda
+            else "CPU"
+        )
+
+        # GPU: mantenemos máxima calidad actual.
+        # CPU: 640 reduce mucho el coste de inferencia.
+        self.imgsz = (
+            1024
+            if self.use_cuda
+            else 640
+        )
+
+        if not self.use_cuda:
+            cpu_count = os.cpu_count() or 4
+
+            torch.set_num_threads(
+                max(
+                    1,
+                    min(
+                        8,
+                        cpu_count - 1,
+                    ),
+                )
+            )
+
     def predict(self, frame):
+
         results = self.model.predict(
             source=frame,
             conf=self.confidence,
-            imgsz=1024,
-            device=0,
+            imgsz=self.imgsz,
+            device=self.device,
             verbose=False,
         )
 

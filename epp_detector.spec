@@ -1,7 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import (
+    collect_all,
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
 
+
+# ============================================================
+# APPLICATION DATA
+# ============================================================
 
 datas = [
     ("app.py", "."),
@@ -11,8 +20,14 @@ datas = [
     ("ui", "ui"),
 ]
 
-hiddenimports = []
 binaries = []
+
+hiddenimports = [
+    "numpy",
+    "pandas",
+    "PIL",
+    "PIL.Image",
+]
 
 
 # ============================================================
@@ -39,6 +54,38 @@ ul_datas, ul_binaries, ul_hiddenimports = collect_all(
 datas += ul_datas
 binaries += ul_binaries
 hiddenimports += ul_hiddenimports
+
+
+# ============================================================
+# TORCH
+# ============================================================
+
+# Torch necesita sus librerías nativas para CPU/CUDA,
+# pero evitamos collect_all("torch") para no meter
+# contenido innecesario.
+
+binaries += collect_dynamic_libs(
+    "torch"
+)
+
+hiddenimports += collect_submodules(
+    "torch"
+)
+
+
+# ============================================================
+# TORCHVISION
+# ============================================================
+
+# Necesario para torchvision::nms y operaciones nativas.
+
+tv_datas, tv_binaries, tv_hiddenimports = collect_all(
+    "torchvision"
+)
+
+datas += tv_datas
+binaries += tv_binaries
+hiddenimports += tv_hiddenimports
 
 
 # ============================================================
@@ -81,32 +128,6 @@ hiddenimports += cv2_hiddenimports
 
 
 # ============================================================
-# PANDAS
-# ============================================================
-
-pd_datas, pd_binaries, pd_hiddenimports = collect_all(
-    "pandas"
-)
-
-datas += pd_datas
-binaries += pd_binaries
-hiddenimports += pd_hiddenimports
-
-
-# ============================================================
-# PIL / PILLOW
-# ============================================================
-
-pil_datas, pil_binaries, pil_hiddenimports = collect_all(
-    "PIL"
-)
-
-datas += pil_datas
-binaries += pil_binaries
-hiddenimports += pil_hiddenimports
-
-
-# ============================================================
 # WEBRTC DEPENDENCIES
 # ============================================================
 
@@ -126,6 +147,22 @@ for package in [
 
 
 # ============================================================
+# PANDAS / PILLOW
+# ============================================================
+
+# No usamos collect_all() para evitar meter extras.
+# PyInstaller ya tiene hooks adecuados para ambos.
+
+datas += collect_data_files(
+    "pandas"
+)
+
+datas += collect_data_files(
+    "PIL"
+)
+
+
+# ============================================================
 # ANALYSIS
 # ============================================================
 
@@ -138,15 +175,48 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+
+    excludes=[
+        # Ya no usamos Excel.
+        "openpyxl",
+
+        # No usados por la app.
+        "tensorflow",
+        "tensorboard",
+        "torchaudio",
+        "seaborn",
+
+        # Desarrollo / notebooks.
+        "IPython",
+        "ipykernel",
+        "jupyter",
+        "jupyterlab",
+        "notebook",
+
+        # GUI innecesaria.
+        "tkinter",
+
+        # Entrenamiento / tooling no necesario.
+        "pytest",
+        "sphinx",
+    ],
+
     noarchive=False,
 )
 
+
+# ============================================================
+# PYTHON ARCHIVE
+# ============================================================
 
 pyz = PYZ(
     a.pure
 )
 
+
+# ============================================================
+# EXECUTABLE
+# ============================================================
 
 exe = EXE(
     pyz,

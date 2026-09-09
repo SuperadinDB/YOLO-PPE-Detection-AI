@@ -3,10 +3,26 @@ import random
 import streamlit as st
 
 
-def apply_theme():
+THEMES = {
+    "Quantum Violet": {
+        "accent": "#a78bfa", "accent2": "#7c3aed",
+        "rgb": "167,139,250", "node": "140, 95, 220", "link": "150, 105, 230",
+    },
+    "Neural Blue": {
+        "accent": "#38bdf8", "accent2": "#2563eb",
+        "rgb": "56,189,248", "node": "56, 189, 248", "link": "59, 130, 246",
+    },
+    "Matrix Emerald": {
+        "accent": "#34d399", "accent2": "#059669",
+        "rgb": "52,211,153", "node": "52, 211, 153", "link": "16, 185, 129",
+    },
+}
 
-    st.markdown(
-        """
+
+def apply_theme(theme_name="Quantum Violet"):
+    palette = THEMES.get(theme_name, THEMES["Quantum Violet"])
+
+    css = """
         <style>
 
         /* =========================
@@ -115,6 +131,65 @@ def apply_theme():
             z-index: 3;
         }
 
+
+        /* =========================
+           TOP CONTROLS
+        ========================== */
+
+        div[data-testid="stSelectbox"] {
+            position: relative;
+            z-index: 1000;
+        }
+
+        div[data-testid="stSelectbox"] > div {
+            min-width: 0 !important;
+        }
+
+        div[data-baseweb="select"] > div {
+            min-height: 32px !important;
+            height: 32px !important;
+            border-radius: 9px !important;
+            padding-left: 7px !important;
+            padding-right: 3px !important;
+            font-size: 0.78rem !important;
+        }
+
+        div[data-baseweb="select"] span {
+            font-size: 0.78rem !important;
+            white-space: nowrap !important;
+        }
+
+        div[data-baseweb="popover"],
+        div[role="listbox"] {
+            z-index: 999999 !important;
+        }
+
+        /* =========================
+           NEURAL PROCESSING
+        ========================== */
+
+        .neural-panel {
+            background: #07101d;
+            border: 1px solid rgba(167,139,250,.16);
+            border-radius: 12px;
+            padding: 11px 14px;
+            margin: 8px 0 6px 0;
+            position: relative;
+            z-index: 3;
+        }
+
+        .neural-title {
+            color: #ffffff;
+            font-size: .92rem;
+            font-weight: 750;
+            margin-bottom: 3px;
+        }
+
+        .neural-text {
+            color: #9eabbc;
+            font-size: .82rem;
+            line-height: 1.45;
+        }
 
         /* =========================
            LANGUAGE
@@ -537,39 +612,6 @@ def apply_theme():
 
         
         /* =========================
-           LANGUAGE SELECT FIX
-        ========================== */
-
-        div[data-testid="stSelectbox"] {
-            min-width: 68px !important;
-        }
-
-        div[data-testid="stSelectbox"] > div {
-            min-width: 68px !important;
-        }
-
-        div[data-baseweb="select"] > div {
-            min-height: 38px !important;
-            padding-left: 8px !important;
-            padding-right: 4px !important;
-        }
-
-        div[data-baseweb="select"] span {
-            font-size: 0.92rem !important;
-            white-space: nowrap !important;
-        }
-
-        div[data-baseweb="select"] svg {
-            width: 16px !important;
-            height: 16px !important;
-        }
-
-        .language-icon {
-            margin-right: 4px;
-        }
-
-
-        /* =========================
            AI GALACTIC PARTICLES
         ========================== */
 
@@ -670,17 +712,25 @@ def apply_theme():
         }
 
         </style>
-        """,
-        unsafe_allow_html=True,
-    )
+        """
+
+    if theme_name != "Quantum Violet":
+        css = (
+            css
+            .replace("#a78bfa", palette["accent"])
+            .replace("#7c3aed", palette["accent2"])
+            .replace("167,139,250", palette["rgb"])
+            .replace("167, 139, 250", palette["rgb"].replace(",", ", "))
+            .replace("126, 34, 206", palette["rgb"].replace(",", ", "))
+            .replace("99, 102, 241", palette["rgb"].replace(",", ", "))
+            .replace("168, 85, 247", palette["rgb"].replace(",", ", "))
+        )
+
+    st.markdown(css, unsafe_allow_html=True)
 
 
-
-
-
-
-
-def particles():
+def particles(theme_name="Quantum Violet"):
+    palette = THEMES.get(theme_name, THEMES["Quantum Violet"])
     """
     Sparse AI constellation network:
     tiny violet nodes, very thin faint links, slow organic movement.
@@ -688,8 +738,7 @@ def particles():
     """
     import streamlit.components.v1 as components
 
-    components.html(
-        """
+    html_code = """
         <script>
         (() => {
             const DOC = window.parent.document;
@@ -936,7 +985,18 @@ def particles():
             );
         })();
         </script>
-        """,
+        """
+
+    if theme_name != "Quantum Violet":
+        html_code = (
+            html_code
+            .replace("150, 105, 230", palette["link"])
+            .replace("140, 95, 220", palette["node"])
+            .replace("105, 72, 175", palette["node"])
+        )
+
+    components.html(
+        html_code,
         height=1,
         scrolling=False,
     )
