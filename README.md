@@ -1,3 +1,6 @@
+# Download Setup Installer for Windows
+https://github.com/SuperadinDB/YOLO-PPE-Detection-AI/releases/download/v1.0.0/EPPDetector-Setup-x64.exe
+
 # Download AppImage for Linux
 https://drive.google.com/file/d/1bNoOO-ofiaSJISXjjaq53gbLLUuVPetK/view?usp=sharing
 

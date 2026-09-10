@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import base64
 import html
 import time
+import tempfile
 
 import av
 import cv2
@@ -34,6 +35,12 @@ import uuid
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 MODEL_PATH = PROJECT_ROOT / "models" / "sh17_model.pt"
+
+# Writable temporary directory.
+# Windows -> %TEMP%\EPPDetector
+# Linux   -> /tmp/EPPDetector
+TEMP_DIR = Path(tempfile.gettempdir()) / "EPPDetector"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 SAMPLE_VIDEO = (
     PROJECT_ROOT
@@ -1151,7 +1158,7 @@ elif source == "Video":
         video_hash = sha1(file_bytes).hexdigest()
 
         if st.session_state.get("video_hash") != video_hash:
-            temp_path = PROJECT_ROOT / "temp_video.mp4"
+            temp_path = TEMP_DIR / "temp_video.mp4"
 
             with open(temp_path, "wb") as f:
                 f.write(file_bytes)
@@ -1186,7 +1193,7 @@ elif source == "Video":
                 except Exception:
                     pass
 
-            temp_path = PROJECT_ROOT / "temp_video.mp4"
+            temp_path = TEMP_DIR / "temp_video.mp4"
             st.session_state.video_cap = cv2.VideoCapture(str(temp_path))
             monitor.reset()
             st.session_state.video_finished = False
@@ -1736,7 +1743,7 @@ elif source == "Background":
             )
 
             temp_path = (
-                PROJECT_ROOT
+                TEMP_DIR
                 / f"background_{job_id}.mp4"
             )
 
